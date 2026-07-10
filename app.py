@@ -24,20 +24,25 @@ if termo:
     conn = conectar_banco()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Consulta SQL usando o Full-Text Search nativo em português do Postgres
+    # Consulta Otimizada: Filtra rápido pelo índice GIN primeiro, e só calcula ranking para o topo
     query_sql = """
+        WITH resultados_filtrados AS (
+            SELECT *
+            FROM textos_normas
+            WHERE to_tsvector('portuguese', COALESCE(ementa, '') || ' ' || COALESCE(texto_consolidado, '') || ' ' || COALESCE(texto_original, '')) 
+                  @@ plainto_tsquery('portuguese', %s)
+            LIMIT 100
+        )
         SELECT *, 
-               ts_rank_cd(to_tsvector('portuguese', COALESCE(ementa, '') || ' ' || COALESCE(texto_consolidado, '') || ' ' || COALESCE(texto_original, '')), query) as relevanca
-        FROM textos_normas, to_tsquery('portuguese', %s) query
-        WHERE to_tsvector('portuguese', COALESCE(ementa, '') || ' ' || COALESCE(texto_consolidado, '') || ' ' || COALESCE(texto_original, '')) @@ query
+               ts_rank_cd(to_tsvector('portuguese', COALESCE(ementa, '') || ' ' || COALESCE(texto_consolidado, '') || ' ' || COALESCE(texto_original, '')), plainto_tsquery('portuguese', %s)) as relevanca
+        FROM resultados_filtrados
         ORDER BY relevanca DESC
         LIMIT 50;
     """
     
     try:
-        # Formata o termo para o padrão do Postgres (troca espaços por & para agir como AND)
-        termo_formatado = " & ".join(termo.split())
-        cursor.execute(query_sql, (termo_formatado,))
+        # Não precisamos mais do termo_formatado com " & ", passamos o termo direto!
+        cursor.execute(query_sql, (termo, termo))
         resultados = cursor.fetchall()
         
         if not resultados:
